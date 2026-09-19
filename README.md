@@ -3,7 +3,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/PowerShell-5.1%2B-blue?style=for-the-badge&logo=powershell">
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-informational?style=for-the-badge">
-  <img src="https://img.shields.io/badge/Version-v2.0.0-success?style=for-the-badge">
+  <img src="https://img.shields.io/badge/Version-v2.1.0-success?style=for-the-badge">
   <img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge">
 </p>
 
@@ -16,7 +16,6 @@ Server Tester is a PowerShell CLI tool for testing network latency, packet loss,
 ## ✨ Features
 
 * 🌐 **Layered network testing**
-
   * ICMP latency
   * TCP connection time
   * Application protocol handshake
@@ -25,17 +24,17 @@ Server Tester is a PowerShell CLI tool for testing network latency, packet loss,
 
 * 🔌 **ICMP, TCP, HTTP, HTTPS and Stratum V1**
 
-* 📊 **Min / Avg / P50 / P95 / P99 / Max**
+* 📊 **Full statistics** — Min / Avg / P50 / P95 / P99 / Max
 
 * 📈 **Jitter, standard deviation and packet loss**
 
-* 🧩 **JSON-based configuration**
+* 🎯 **User-friendly Status** — `OK` / `Reachable` / `Degraded` / `Down`
 
-* 🛡️ **Strict configuration validation**
+* 🧩 **JSON-based configuration** with strict validation
 
-* 📁 **CSV + JSON reports**
+* 📁 **Clean output** — Simplified CSV + Structured JSON
 
-* ⏱️ **Hard test deadline**
+* ⏱️ **Hard test deadline** with forced worker stop
 
 * 🖥️ **Interactive menu + CLI mode**
 
@@ -222,9 +221,74 @@ The tool reports:
 
 ---
 
+## 🎯 Server Status Classification
+
+Each server gets a clear status so you can understand results at a glance:
+
+| Status | Meaning |
+|--------|---------|
+| ✅ **OK** | No packet loss + at least one working application protocol |
+| 🔵 **Reachable** | No packet loss, but no working application protocol |
+| ⚠️ **Degraded** | Some packet loss (between 0% and 100%) |
+| ❌ **Down** | 100% packet loss |
+
+---
+
 ## 📤 Output
 
-Results are automatically exported as:
+Results are automatically exported as **CSV** and **JSON** — both user-friendly.
+
+### CSV — Simplified, 12 columns
+
+```csv
+"Rank","Server","IP","Category","Status","Packet Loss %","Avg Latency","P95 Latency","Jitter","Best Port","Best Protocol","Score"
+"1","1.1.1.1","1.1.1.1","dns","OK","0","148.3","165","12.89","443","HTTPS","101.02"
+"2","9.9.9.9","9.9.9.9","dns","Reachable","0","147.75","165","9.95","","","259.86"
+"5","208.67.222.222","208.67.222.222","dns","Down","100",,,,"","","11149"
+```
+
+**Perfect for Excel, Google Sheets, or any spreadsheet tool.**
+
+### JSON — Structured for automation
+
+```json
+[
+  {
+    "rank": 1,
+    "server": "1.1.1.1",
+    "ip": "1.1.1.1",
+    "category": "dns",
+    "status": "OK",
+    "latency": {
+      "avg_ms": 148.3,
+      "min_ms": 126,
+      "max_ms": 173,
+      "p95_ms": 165,
+      "jitter_ms": 12.89
+    },
+    "packets": {
+      "sent": 20,
+      "received": 20,
+      "lost": 0,
+      "loss_pct": 0
+    },
+    "ports": {
+      "tcp_open": [53, 443],
+      "stratum_ok": [],
+      "https_ok": [443],
+      "http_ok": [],
+      "best": 443,
+      "best_protocol": "HTTPS",
+      "best_latency_ms": 643.8
+    },
+    "score": 101.02
+  }
+]
+```
+
+**Perfect for dashboards, automation, and analysis tools.**
+
+### File naming
 
 ```text
 output/
@@ -235,8 +299,8 @@ output/
 Example:
 
 ```text
-[CSV]  output/server_tester_mining_viabtc_20260920_002702.csv
-[JSON] output/server_tester_mining_viabtc_20260920_002702.json
+[CSV]  output/server_tester_dns_20260920_012030.csv
+[JSON] output/server_tester_dns_20260920_012030.json
 ```
 
 ---
@@ -292,6 +356,53 @@ docs/
 │   ├── results.png
 │   └── ranking.png
 └── demo.gif
+```
+
+### Sample Output
+
+```text
+======================================================================================================================
+                                                    SERVER TESTER
+                                               POWER EDITION  -  v2.1.0
+======================================================================================================================
+
+  RESULTS  Public DNS Resolvers
+======================================================================================================================
+
+----------------------------------------------------------------------------------------------------------------------
+  HOST  1.1.1.1   [OK]
+----------------------------------------------------------------------------------------------------------------------
+  IP          1.1.1.1                 Category    dns
+  Packets     20 / 20 received        Loss        0.0%
+
+  ICMP LATENCY
+----------------------------------------------------------------------------------------------------------------------
+  Min       126.0 ms        ######################........
+  P50       149.0 ms        ##########################....
+  Average   148.3 ms        ##########################....
+  P95       165.0 ms        #############################.
+  P99       173.0 ms        ##############################
+  Max       173.0 ms        ##############################
+
+  PORT SCAN
+----------------------------------------------------------------------------------------------------------------------
+    53     OPEN  tcp   152.8 ms             TCP FAIL
+    443    OPEN  tcp   143.9 ms  app   643.8 ms  HTTPS OK [HTTP 301]
+----------------------------------------------------------------------------------------------------------------------
+
+==============================================  FINAL RANKING  -  dns  ===============================================
+
+  #   SERVER                STATUS          LOSS       AVG       P95    JITTER  BEST               SCORE
+----------------------------------------------------------------------------------------------------------------------
+   1 1.1.1.1               OK              0.0%   148.3ms   165.0ms    12.9ms  HTTPS:443          101.0
+   2 9.9.9.9               Reachable       0.0%   147.8ms   165.0ms    10.0ms  -                  259.9
+   3 8.8.4.4               Reachable       0.0%   148.8ms   165.0ms    12.0ms  -                  261.0
+   4 8.8.8.8               Degraded        5.0%   150.8ms   173.0ms    17.4ms  -                  315.3
+   5 208.67.222.222        Down          100.0%       N/A       N/A       N/A  -                11149.0
+
+======================================================================================================================
+
+  * TOP RANKED   1.1.1.1   (best port: 443)
 ```
 
 ---
