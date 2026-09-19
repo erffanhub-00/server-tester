@@ -1,0 +1,103 @@
+{
+  "mining_viabtc": {
+    "name": "ViaBTC Mining Pools",
+    "description": "ViaBTC Stratum mining endpoints",
+    "servers": [
+      "btc.viabtc.io",
+      "btc.viabtc.cc",
+      "btc.viabtc.top",
+      "btc.powhashing.com"
+    ],
+    "ports": [3333, 443, 25, 1800, 4433, 8888, 80, 8080, 5000, 7777],
+    "stratum_ports": [3333, 4433, 1800, 5000, 7777],
+    "http_ports": [80, 8080, 8888],
+    "https_ports": [443]
+  },
+  "mining_major": {
+    "name": "Major Mining Pools",
+    "description": "Large public mining pools",
+    "servers": [
+      "stratum.f2pool.com",
+      "stratum.antpool.com",
+      "btc.foundryusa.com",
+      "pool.binance.com",
+      "stratum.slushpool.com"
+    ],
+    "ports": [3333, 443, 1800, 4433, 8888],
+    "stratum_ports": [3333, 443, 1800, 4433, 8888],
+    "http_ports": [],
+    "https_ports": []
+  },
+  "cdn": {
+    "name": "CDN Endpoints",
+    "description": "Major CDN edge servers",
+    "servers": [
+      "cloudflare.com",
+      "www.fastly.com",
+      "www.akamai.com",
+      "www.cloudfront.net",
+      "www.bunnycdn.com"
+    ],
+    "ports": [80, 443],
+    "stratum_ports": [],
+    "http_ports": [80],
+    "https_ports": [443]
+  },
+  "dns": {
+    "name": "Public DNS Resolvers",
+    "description": "Well-known public DNS servers",
+    "servers": [
+      "1.1.1.1",
+      "8.8.8.8",
+      "9.9.9.9",
+      "208.67.222.222",
+      "8.8.4.4"
+    ],
+    "ports": [53, 443],
+    "stratum_ports": [],
+    "http_ports": [],
+    "https_ports": [443]
+  },
+  "cloud": {
+    "name": "Cloud Providers",
+    "description": "Public cloud API endpoints",
+    "servers": [
+      "aws.amazon.com",
+      "azure.microsoft.com",
+      "cloud.google.com",
+      "www.digitalocean.com",
+      "www.linode.com"
+    ],
+    "ports": [80, 443],
+    "stratum_ports": [],
+    "http_ports": [80],
+    "https_ports": [443]
+  },
+  "exchanges": {
+    "name": "Crypto Exchanges",
+    "description": "Major exchange endpoints",
+    "servers": [
+      "api.binance.com",
+      "api.coinbase.com",
+      "api.kraken.com",
+      "www.okx.com",
+      "api.bybit.com"
+    ],
+    "ports": [80, 443],
+    "stratum_ports": [],
+    "http_ports": [80],
+    "https_ports": [443]
+  },
+  "custom": {
+    "name": "Custom Test Set",
+    "description": "Edit this list to test your own servers",
+    "servers": [
+      "example.com",
+      "google.com"
+    ],
+    "ports": [80, 443],
+    "stratum_ports": [],
+    "http_ports": [80],
+    "https_ports": [443]
+  }
+}

@@ -1,0 +1,30 @@
+# Output CSVs and JSONs (keep the folder, ignore contents)
+output/*.csv
+output/*.json
+output/*.log
+!output/.gitkeep
+
+# PowerShell
+*.ps1xml
+*.pssc
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*~
+*.sublime-*
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+desktop.ini
+ehthumbs.db
+
+# Temporary
+*.tmp
+*.bak
+*.orig
+*.rej
