@@ -1,5 +1,5 @@
 ﻿# ========================================================
-# Server Tester - POWER EDITION  v2.0.0
+# Server Tester - POWER EDITION  v2.1.0
 # ========================================================
 # Multi-protocol, multi-category network tester.
 # Config-driven (categories.json). Cross-platform.
@@ -25,7 +25,7 @@ param(
 # ========================================================
 # GLOBAL STATE
 # ========================================================
-$script:VERSION            = "2.0.0"
+$script:VERSION            = "2.1.0"
 $script:MAX_PACKETS        = 500
 $script:DEFAULT_PACKETS    = 20
 $script:MIN_PACKETS        = 1
@@ -197,6 +197,46 @@ function Get-LossColor {
 }
 
 # ========================================================
+# STATUS CLASSIFICATION (user-friendly)
+# ========================================================
+function Get-Status {
+    param($Row)
+
+    if ($Row.Loss -ge 100) { return "Down" }
+
+    $hasApp = ($Row.StratumPorts -and $Row.StratumPorts -ne "") -or
+              ($Row.HttpsPorts   -and $Row.HttpsPorts   -ne "") -or
+              ($Row.HttpPorts    -and $Row.HttpPorts    -ne "")
+
+    if ($hasApp) {
+        if ($Row.Loss -gt 0) { return "Degraded" }
+        return "OK"
+    }
+
+    if ($Row.Loss -gt 0) { return "Degraded" }
+    return "Reachable"
+}
+
+function Get-StatusColor {
+    param([string]$Status)
+    switch ($Status) {
+        "OK"        { return "Green" }
+        "Reachable" { return "Cyan" }
+        "Degraded"  { return "Yellow" }
+        "Down"      { return "Red" }
+        default     { return "White" }
+    }
+}
+
+function Get-BestProtocol {
+    param($Row)
+    if     ($Row.StratumPorts -and $Row.StratumPorts -ne "") { return "Stratum" }
+    elseif ($Row.HttpsPorts   -and $Row.HttpsPorts   -ne "") { return "HTTPS" }
+    elseif ($Row.HttpPorts    -and $Row.HttpPorts    -ne "") { return "HTTP" }
+    else                                                     { return "" }
+}
+
+# ========================================================
 # CONFIG LOADING + STRICT VALIDATION
 # ========================================================
 function Load-Categories {
@@ -265,12 +305,10 @@ function Test-CategoryData {
         return $false
     }
 
-    # subset checks
     foreach ($p in $httpPorts)    { if ($ports -notcontains $p) { Write-Host "  [!] $Key : http_ports $p not in ports"    -ForegroundColor $script:Theme.Danger; return $false } }
     foreach ($p in $httpsPorts)   { if ($ports -notcontains $p) { Write-Host "  [!] $Key : https_ports $p not in ports"   -ForegroundColor $script:Theme.Danger; return $false } }
     foreach ($p in $stratumPorts) { if ($ports -notcontains $p) { Write-Host "  [!] $Key : stratum_ports $p not in ports" -ForegroundColor $script:Theme.Danger; return $false } }
 
-    # overlap checks
     $allProto = @()
     foreach ($p in $httpPorts)    { $allProto += @{ port = $p; proto = "http" } }
     foreach ($p in $httpsPorts)   { $allProto += @{ port = $p; proto = "https" } }
@@ -340,9 +378,6 @@ $script:WorkerScript = {
         [string]$HttpVersion
     )
 
-    # ------------------------------------------------
-    # Helper: membership test (safe in runspace)
-    # ------------------------------------------------
     function Test-InList {
         param([int]$Value, [int[]]$List)
         if (-not $List) { return $false }
@@ -352,9 +387,6 @@ $script:WorkerScript = {
         return $false
     }
 
-    # ------------------------------------------------
-    # DNS (returns both v4 and v6 info)
-    # ------------------------------------------------
     function Resolve-IP {
         param([string]$Name)
         $out = [PSCustomObject]@{
@@ -374,9 +406,6 @@ $script:WorkerScript = {
         return $out
     }
 
-    # ------------------------------------------------
-    # LAYER 1 : ICMP
-    # ------------------------------------------------
     function Measure-Icmp {
         param([string]$Name, [int]$Count, [int]$TimeoutMs)
         $samples = New-Object System.Collections.Generic.List[double]
@@ -407,9 +436,6 @@ $script:WorkerScript = {
         return [Math]::Round($sorted[$idx], 2)
     }
 
-    # ------------------------------------------------
-    # LAYER 2 : TCP connect
-    # ------------------------------------------------
     function Measure-TcpConnect {
         param([string]$Name, [int]$Port, [int]$TimeoutMs)
         $client = $null
@@ -426,9 +452,6 @@ $script:WorkerScript = {
         finally { if ($client) { try { $client.Close() } catch {} } }
     }
 
-    # ------------------------------------------------
-    # LAYER 3a : HTTP  (returns object with TcpTime + AppTime + Status)
-    # ------------------------------------------------
     function Measure-Http {
         param([string]$Name, [int]$Port, [int]$TimeoutMs, [string]$Method, [string]$Version)
 
@@ -496,9 +519,6 @@ $script:WorkerScript = {
         return $r
     }
 
-    # ------------------------------------------------
-    # LAYER 3b : HTTPS  (same as HTTP + TLS)
-    # ------------------------------------------------
     function Measure-Https {
         param([string]$Name, [int]$Port, [int]$TimeoutMs, [string]$Method, [string]$Version, [bool]$ValidateTls)
 
@@ -591,9 +611,6 @@ $script:WorkerScript = {
         return $r
     }
 
-    # ------------------------------------------------
-    # LAYER 3c : Stratum
-    # ------------------------------------------------
     function Measure-Stratum {
         param([string]$Name, [int]$Port, [int]$TimeoutMs, [int]$MaxBuf)
 
@@ -622,7 +639,7 @@ $script:WorkerScript = {
             $stream.ReadTimeout  = $TimeoutMs
             $stream.WriteTimeout = $TimeoutMs
 
-            $req = '{"id":1,"method":"mining.subscribe","params":["ServerTester/2.0"]}' + "`n"
+            $req = '{"id":1,"method":"mining.subscribe","params":["ServerTester/2.1"]}' + "`n"
             $bytes = [System.Text.Encoding]::ASCII.GetBytes($req)
 
             $swApp = [System.Diagnostics.Stopwatch]::StartNew()
@@ -674,10 +691,9 @@ $script:WorkerScript = {
     # ================================================
     # MAIN WORKER FLOW
     # ================================================
-    $Global:ST_VERSION = "2.0.0"
+    $Global:ST_VERSION = "2.1.0"
     $dns = Resolve-IP $HostName
 
-    # LAYER 1 : ICMP
     $icmp = Measure-Icmp -Name $HostName -Count $Packets -TimeoutMs $PingTimeoutMs
     $icmpArr = $icmp.Samples
     $icmpFailed = $icmp.Failed
@@ -704,7 +720,6 @@ $script:WorkerScript = {
     }
     $icmpLoss = if ($Packets -gt 0) { [Math]::Round(($icmpFailed / $Packets) * 100, 1) } else { 0.0 }
 
-    # LAYER 2 + 3 : Per-port
     $portResults = @{}
 
     foreach ($p in $Ports) {
@@ -747,7 +762,6 @@ $script:WorkerScript = {
             $entry.Error        = $r.Error
 
         } else {
-            # TCP only
             $entry.Protocol = "tcp"
             $entry.TcpTime  = Measure-TcpConnect -Name $HostName -Port $p -TimeoutMs $TcpTimeoutMs
         }
@@ -755,9 +769,6 @@ $script:WorkerScript = {
         $portResults[$p] = $entry
     }
 
-    # ------------------------------------------------
-    # Aggregate
-    # ------------------------------------------------
     $tcpOpenList   = @()
     $stratumOkList = @()
     $httpOkList    = @()
@@ -775,7 +786,6 @@ $script:WorkerScript = {
         }
     }
 
-    # Best port - use application-level time
     $bestPort = ""
     $bestTime = [double]::MaxValue
     foreach ($p in $Ports) {
@@ -788,7 +798,7 @@ $script:WorkerScript = {
         }
     }
 
-    # Serialize portResults into flat strings for CSV
+    # ⭐ NEW: Port details بدون "ms" تکراری
     $portDetail = @()
     foreach ($p in $Ports) {
         $e = $portResults[$p]
@@ -796,7 +806,7 @@ $script:WorkerScript = {
         $appStr = if ($null -eq $e.ProtocolTime) { "-" } else { "{0:F1}" -f $e.ProtocolTime }
         $stStr  = if ($null -eq $e.Status)       { "" }  else { " [HTTP $($e.Status)]" }
         $okStr  = if ($e.ProtocolOk)             { "OK" } else { "FAIL" }
-        $portDetail += "${p}:$($e.Protocol):${tcpStr}ms:${appStr}ms:$okStr$stStr"
+        $portDetail += "${p}:$($e.Protocol):${tcpStr}:${appStr}:$okStr$stStr"
     }
 
     return [PSCustomObject]@{
@@ -806,7 +816,6 @@ $script:WorkerScript = {
         IPv4              = $dns.IPv4
         IPv6              = $dns.IPv6
 
-        # Layer 1 - ICMP
         IcmpSuccess       = $icmpSuccess
         IcmpFailed        = $icmpFailed
         IcmpLoss          = $icmpLoss
@@ -819,10 +828,8 @@ $script:WorkerScript = {
         IcmpJitter        = $icmpJit
         IcmpStdDev        = $icmpStd
 
-        # Layer 2 - TCP
         TcpOpenPorts      = ($tcpOpenList -join ",")
 
-        # Layer 3 - Application
         StratumPorts      = ($stratumOkList -join ",")
         HttpPorts         = ($httpOkList    -join ",")
         HttpsPorts        = ($httpsOkList   -join ",")
@@ -830,7 +837,6 @@ $script:WorkerScript = {
         BestPort          = $bestPort
         PortDetails       = ($portDetail -join " | ")
 
-        # For backward-compatible display
         Loss              = $icmpLoss
         Avg               = $icmpAvg
         Min               = $icmpMin
@@ -900,7 +906,7 @@ function Get-RankIcon {
 }
 
 # ========================================================
-# RANKING + EXPORT
+# RANKING + EXPORT (SIMPLIFIED)
 # ========================================================
 function Show-Ranking {
     param([array]$Results, [string]$CategoryKey)
@@ -918,39 +924,41 @@ function Show-Ranking {
         Select-Object *, @{n='Score'; e={ Get-Score $_ }} |
         Sort-Object Score
 
-    $hdr = "{0,-4}{1,-24}{2,8}{3,10}{4,10}{5,10}  {6,-16}{7,8}" -f `
-        "#","SERVER","LOSS","AVG","P95","JITTER","PROTO","SCORE"
+    # ⭐ NEW header with STATUS
+    $hdr = "{0,-4}{1,-22}{2,-12}{3,8}{4,10}{5,10}{6,10}  {7,-16}{8,8}" -f `
+        "#","SERVER","STATUS","LOSS","AVG","P95","JITTER","BEST","SCORE"
     Write-Host "  " -NoNewline
     Write-Host $hdr -ForegroundColor $script:Theme.Muted
     Write-BorderThin
 
     $rank = 1
     foreach ($r in $scored) {
-        $rankColor = Get-RankColor $rank
-        $lossColor = Get-LossColor $r.Loss
+        $rankColor   = Get-RankColor $rank
+        $lossColor   = Get-LossColor $r.Loss
+        $status      = Get-Status $r
+        $statusColor = Get-StatusColor $status
 
         $avgStr = if ($null -eq $r.Avg)    { "N/A" } else { "{0:F1}ms" -f $r.Avg }
         $p95Str = if ($null -eq $r.P95)    { "N/A" } else { "{0:F1}ms" -f $r.P95 }
         $jitStr = if ($null -eq $r.Jitter) { "N/A" } else { "{0:F1}ms" -f $r.Jitter }
 
-        $proto = "no"
-        if     ($r.StratumPorts -and $r.StratumPorts -ne "") { $proto = "Stratum:$($r.BestPort)" }
-        elseif ($r.HttpsPorts   -and $r.HttpsPorts   -ne "") { $proto = "HTTPS:$($r.BestPort)" }
-        elseif ($r.HttpPorts    -and $r.HttpPorts    -ne "") { $proto = "HTTP:$($r.BestPort)" }
-        if ($proto.Length -gt 15) { $proto = $proto.Substring(0,15) }
+        $best = Get-BestProtocol $r
+        $bestDisplay = if ($best) { "$best`:$($r.BestPort)" } else { "-" }
+        if ($bestDisplay.Length -gt 15) { $bestDisplay = $bestDisplay.Substring(0,15) }
 
         $avgColor = "White"
         if ($null -ne $r.Avg) { $avgColor = Get-LatencyColor ([double]$r.Avg) }
 
         Write-Host "  " -NoNewline
         Write-Host (Get-RankIcon $rank) -ForegroundColor $rankColor -NoNewline
-        Write-Host ("{0,-24}" -f $r.Host) -NoNewline
-        Write-Host ("{0,8:F1}%" -f $r.Loss) -ForegroundColor $lossColor -NoNewline
+        Write-Host ("{0,-22}" -f $r.Host) -NoNewline
+        Write-Host ("{0,-12}" -f $status) -ForegroundColor $statusColor -NoNewline
+        Write-Host ("{0,7:F1}%" -f $r.Loss) -ForegroundColor $lossColor -NoNewline
         Write-Host ("{0,10}" -f $avgStr) -ForegroundColor $avgColor -NoNewline
         Write-Host ("{0,10}" -f $p95Str) -ForegroundColor $script:Theme.Warning -NoNewline
         Write-Host ("{0,10}" -f $jitStr) -ForegroundColor $script:Theme.Secondary -NoNewline
         Write-Host "  " -NoNewline
-        Write-Host ("{0,-15}" -f $proto) -ForegroundColor $script:Theme.Accent -NoNewline
+        Write-Host ("{0,-16}" -f $bestDisplay) -ForegroundColor $script:Theme.Accent -NoNewline
         Write-Host ("{0,8:F1}" -f $r.Score) -ForegroundColor $script:Theme.Highlight
 
         $rank++
@@ -971,23 +979,34 @@ function Show-Ranking {
     Write-Host ")" -ForegroundColor $script:Theme.Muted
     Write-Host ""
 
-    # ---------- CSV ----------
-    $ts      = Get-Date -Format 'yyyyMMdd_HHmmss'
-    $csvName = "server_tester_${CategoryKey}_${ts}.csv"
-    $csv     = Join-Path $script:OutputPath $csvName
+    # ---------- Export ----------
+    $ts       = Get-Date -Format 'yyyyMMdd_HHmmss'
+    $csvName  = "server_tester_${CategoryKey}_${ts}.csv"
+    $csv      = Join-Path $script:OutputPath $csvName
     $jsonName = "server_tester_${CategoryKey}_${ts}.json"
     $json     = Join-Path $script:OutputPath $jsonName
 
+    # ⭐ NEW: Simple CSV for normal users
     try {
-        $scored | Select-Object `
-            Host, Category, IP, IPv4, IPv6,
-            IcmpSuccess, IcmpFailed, IcmpLoss,
-            IcmpAvg, IcmpMin, IcmpMax, IcmpP50, IcmpP95, IcmpP99,
-            IcmpJitter, IcmpStdDev,
-            TcpOpenPorts,
-            StratumPorts, HttpPorts, HttpsPorts,
-            BestPort, PortDetails, Score |
-            Export-Csv -Path $csv -NoTypeInformation -Encoding UTF8
+        $rankIdx = 1
+        $csvData = foreach ($s in $scored) {
+            [PSCustomObject]@{
+                "Rank"           = $rankIdx
+                "Server"         = $s.Host
+                "IP"             = $s.IP
+                "Category"       = $s.Category
+                "Status"         = Get-Status $s
+                "Packet Loss %"  = $s.Loss
+                "Avg Latency"    = $s.Avg
+                "P95 Latency"    = $s.P95
+                "Jitter"         = $s.Jitter
+                "Best Port"      = $s.BestPort
+                "Best Protocol"  = Get-BestProtocol $s
+                "Score"          = $s.Score
+            }
+            $rankIdx++
+        }
+        $csvData | Export-Csv -Path $csv -NoTypeInformation -Encoding UTF8
         Write-Host "  " -NoNewline
         Write-Host "[CSV]  " -ForegroundColor $script:Theme.Success -NoNewline
         Write-Host $csv -ForegroundColor $script:Theme.Muted
@@ -995,17 +1014,79 @@ function Show-Ranking {
         Write-Host "  [ERR] CSV: $($_.Exception.Message)" -ForegroundColor $script:Theme.Danger
     }
 
+    # ⭐ NEW: Structured JSON with nested objects
     try {
-        $scored | Select-Object `
-            Host, Category, IP, IPv4, IPv6,
-            IcmpSuccess, IcmpFailed, IcmpLoss,
-            IcmpAvg, IcmpMin, IcmpMax, IcmpP50, IcmpP95, IcmpP99,
-            IcmpJitter, IcmpStdDev,
-            TcpOpenPorts,
-            StratumPorts, HttpPorts, HttpsPorts,
-            BestPort, PortDetails, Score |
-            ConvertTo-Json -Depth 5 |
-            Set-Content -Path $json -Encoding UTF8
+        $jsonData = @()
+        $rankIdx = 1
+        foreach ($s in $scored) {
+            # ports as real arrays
+            $tcpArr = @()
+            if ($s.TcpOpenPorts -and $s.TcpOpenPorts -ne "") {
+                $tcpArr = @($s.TcpOpenPorts -split "," | ForEach-Object { [int]$_ })
+            }
+            $stratArr = @()
+            if ($s.StratumPorts -and $s.StratumPorts -ne "") {
+                $stratArr = @($s.StratumPorts -split "," | ForEach-Object { [int]$_ })
+            }
+            $httpsArr = @()
+            if ($s.HttpsPorts -and $s.HttpsPorts -ne "") {
+                $httpsArr = @($s.HttpsPorts -split "," | ForEach-Object { [int]$_ })
+            }
+            $httpArr = @()
+            if ($s.HttpPorts -and $s.HttpPorts -ne "") {
+                $httpArr = @($s.HttpPorts -split "," | ForEach-Object { [int]$_ })
+            }
+
+            # best latency from PortDetails
+            $bestLatency = $null
+            if ($s.BestPort -and $s.PortDetails) {
+                foreach ($segment in ($s.PortDetails -split " \| ")) {
+                    $parts = $segment -split ":"
+                    if ($parts.Count -ge 5 -and $parts[0] -eq "$($s.BestPort)") {
+                        if ($parts[3] -ne "-") { $bestLatency = [double]$parts[3] }
+                        break
+                    }
+                }
+            }
+
+            $jsonData += [ordered]@{
+                rank     = $rankIdx
+                server   = $s.Host
+                ip       = $s.IP
+                category = $s.Category
+                status   = Get-Status $s
+
+                latency = [ordered]@{
+                    avg_ms    = $s.Avg
+                    min_ms    = $s.Min
+                    max_ms    = $s.Max
+                    p95_ms    = $s.P95
+                    jitter_ms = $s.Jitter
+                }
+
+                packets = [ordered]@{
+                    sent     = $s.Success + $s.Failed
+                    received = $s.Success
+                    lost     = $s.Failed
+                    loss_pct = $s.Loss
+                }
+
+                ports = [ordered]@{
+                    tcp_open     = $tcpArr
+                    stratum_ok   = $stratArr
+                    https_ok     = $httpsArr
+                    http_ok      = $httpArr
+                    best         = if ($s.BestPort) { [int]$s.BestPort } else { $null }
+                    best_protocol = Get-BestProtocol $s
+                    best_latency_ms = $bestLatency
+                }
+
+                score = $s.Score
+            }
+            $rankIdx++
+        }
+
+        $jsonData | ConvertTo-Json -Depth 5 | Set-Content -Path $json -Encoding UTF8
         Write-Host "  " -NoNewline
         Write-Host "[JSON] " -ForegroundColor $script:Theme.Success -NoNewline
         Write-Host $json -ForegroundColor $script:Theme.Muted
@@ -1022,11 +1103,16 @@ function Show-Ranking {
 function Show-ServerDetail {
     param($r, [int[]]$Ports, [int[]]$HttpPorts, [int[]]$HttpsPorts, [int[]]$StratumPorts)
 
+    $status = Get-Status $r
+    $statusColor = Get-StatusColor $status
+
     Write-Host ""
     Write-BorderThin
     Write-Host "  " -NoNewline
     Write-Host "HOST  " -ForegroundColor $script:Theme.Muted -NoNewline
-    Write-Host $r.Host -ForegroundColor $script:Theme.Primary
+    Write-Host $r.Host -ForegroundColor $script:Theme.Primary -NoNewline
+    Write-Host "   " -NoNewline
+    Write-Host "[$status]" -ForegroundColor $statusColor
     Write-BorderThin
 
     Write-Host "  " -NoNewline
@@ -1036,16 +1122,10 @@ function Show-ServerDetail {
     Write-Host $r.Category
 
     Write-Host "  " -NoNewline
-    Write-Host "Success     " -ForegroundColor $script:Theme.Muted -NoNewline
-    Write-Host ("{0,-24}" -f $r.Success) -ForegroundColor $script:Theme.Success -NoNewline
-    Write-Host "Failed      " -ForegroundColor $script:Theme.Muted -NoNewline
-    Write-Host $r.Failed -ForegroundColor $script:Theme.Danger
-
-    Write-Host "  " -NoNewline
-    Write-Host "Packet Loss " -ForegroundColor $script:Theme.Muted -NoNewline
-    Write-Host ("{0,-24}" -f (Format-Pct $r.Loss)) -ForegroundColor (Get-LossColor $r.Loss) -NoNewline
-    Write-Host "Jitter      " -ForegroundColor $script:Theme.Muted -NoNewline
-    Write-Host (Format-Ms $r.Jitter) -ForegroundColor $script:Theme.Secondary
+    Write-Host "Packets     " -ForegroundColor $script:Theme.Muted -NoNewline
+    Write-Host ("{0,-24}" -f "$($r.Success) / $($r.Success + $r.Failed) received") -ForegroundColor $script:Theme.Success -NoNewline
+    Write-Host "Loss        " -ForegroundColor $script:Theme.Muted -NoNewline
+    Write-Host (Format-Pct $r.Loss) -ForegroundColor (Get-LossColor $r.Loss)
 
     Write-Host ""
     Write-Host "  " -NoNewline
@@ -1085,7 +1165,6 @@ function Show-ServerDetail {
     Write-Host "PORT SCAN" -ForegroundColor $script:Theme.Muted
     Write-BorderThin
 
-    # Re-parse PortDetails for the display
     $detailsMap = @{}
     if ($r.PortDetails) {
         foreach ($segment in ($r.PortDetails -split " \| ")) {
@@ -1102,6 +1181,7 @@ function Show-ServerDetail {
         }
     }
 
+    # ⭐ NEW: cleaner port scan display
     foreach ($p in $Ports) {
         $pStr = "$p"
         Write-Host "  " -NoNewline
@@ -1117,13 +1197,14 @@ function Show-ServerDetail {
 
             if ($d.tcp -ne "-") {
                 $stateColor = if ($d.state -like "OK*") { $script:Theme.Success } else { $script:Theme.Warning }
-                $tcpStr = ("{0,7} ms" -f $d.tcp)
-                $appStr = if ($d.app -ne "-") { ("  app {0,7} ms" -f $d.app) } else { "" }
+
+                $tcpPart = if ($d.tcp -ne "-") { "tcp {0,7} ms" -f $d.tcp } else { "tcp     -    " }
+                $appPart = if ($d.app -ne "-") { "  app {0,7} ms" -f $d.app } else { "           " }
 
                 Write-Host ("  {0,-6}" -f $p) -ForegroundColor $script:Theme.Highlight -NoNewline
                 Write-Host " OPEN  " -ForegroundColor $script:Theme.Success -NoNewline
-                Write-Host ("tcp{0}" -f $tcpStr) -ForegroundColor $script:Theme.Muted -NoNewline
-                Write-Host $appStr -ForegroundColor $script:Theme.Muted -NoNewline
+                Write-Host $tcpPart -ForegroundColor $script:Theme.Muted -NoNewline
+                Write-Host $appPart -ForegroundColor $script:Theme.Muted -NoNewline
                 Write-Host "  $protoTag " -ForegroundColor $script:Theme.Primary -NoNewline
                 Write-Host "$($d.state)" -ForegroundColor $stateColor
             }
@@ -1253,7 +1334,6 @@ function Start-CategoryTest {
             if ($done -lt $total) { Start-Sleep -Milliseconds 150 }
         }
 
-        # HARD STOP remaining workers
         if ($done -lt $total) {
             Write-Host "  [!] Hard timeout reached. Stopping remaining workers." -ForegroundColor $script:Theme.Warning
             foreach ($h in $handles) {
