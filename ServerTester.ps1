@@ -224,7 +224,9 @@ function Get-CategoryNames {
 function ConvertTo-PortArray {
     param($Value, [string]$Field, [string]$CategoryKey)
     $result = @()
-    if ($null -eq $Value) { return $result }
+    if ($null -eq $Value) { return ,$result }
+    if ($Value -is [array] -and $Value.Count -eq 0) { return ,$result }
+    if ($Value -isnot [array]) { $Value = @($Value) }
     foreach ($v in $Value) {
         $n = 0
         if (-not [int]::TryParse("$v", [ref]$n)) {
@@ -237,7 +239,7 @@ function ConvertTo-PortArray {
         }
         if ($result -notcontains $n) { $result += $n }
     }
-    return $result
+    return ,$result
 }
 
 function Test-CategoryData {
@@ -259,8 +261,7 @@ function Test-CategoryData {
     $httpsPorts   = ConvertTo-PortArray $Cat.https_ports   "https_ports"   $Key
     $stratumPorts = ConvertTo-PortArray $Cat.stratum_ports "stratum_ports" $Key
 
-    if ($null -eq $ports -or $null -eq $httpPorts -or
-        $null -eq $httpsPorts -or $null -eq $stratumPorts) {
+    if ($null -eq $ports) {
         return $false
     }
 
@@ -1151,10 +1152,10 @@ function Start-CategoryTest {
     }
 
     $servers      = @($CategoryData.servers)
-    $ports        = @(ConvertTo-PortArray $CategoryData.ports        "ports"         $CategoryKey)
-    $httpPorts    = @(ConvertTo-PortArray $CategoryData.http_ports   "http_ports"    $CategoryKey)
-    $httpsPorts   = @(ConvertTo-PortArray $CategoryData.https_ports  "https_ports"   $CategoryKey)
-    $stratumPorts = @(ConvertTo-PortArray $CategoryData.stratum_ports "stratum_ports" $CategoryKey)
+    $ports        = ConvertTo-PortArray $CategoryData.ports        "ports"         $CategoryKey
+    $httpPorts    = ConvertTo-PortArray $CategoryData.http_ports   "http_ports"    $CategoryKey
+    $httpsPorts   = ConvertTo-PortArray $CategoryData.https_ports  "https_ports"   $CategoryKey
+    $stratumPorts = ConvertTo-PortArray $CategoryData.stratum_ports "stratum_ports" $CategoryKey
 
     try { [Console]::Clear() } catch {}
     Write-Banner
@@ -1204,20 +1205,20 @@ function Start-CategoryTest {
             $ps = [powershell]::Create()
             $ps.RunspacePool = $pool
             [void]$ps.AddScript($script:WorkerScript).
-                AddArgument($s).
-                AddArgument($CategoryKey).
-                AddArgument($Packets).
-                AddArgument(@([int[]]$ports)).
-                AddArgument(@([int[]]$httpPorts)).
-                AddArgument(@([int[]]$httpsPorts)).
-                AddArgument(@([int[]]$stratumPorts)).
-                AddArgument($script:PING_TIMEOUT_MS).
-                AddArgument($script:TCP_TIMEOUT_MS).
-                AddArgument($script:APP_TIMEOUT_MS).
-                AddArgument($script:MAX_BUFFER_BYTES).
-                AddArgument($script:VALIDATE_TLS).
-                AddArgument($script:HTTP_METHOD).
-                AddArgument($script:HTTP_VERSION)
+                AddParameter("HostName",       $s).
+                AddParameter("CategoryName",   $CategoryKey).
+                AddParameter("Packets",        $Packets).
+                AddParameter("Ports",          [int[]]$ports).
+                AddParameter("HttpPorts",      [int[]]$httpPorts).
+                AddParameter("HttpsPorts",     [int[]]$httpsPorts).
+                AddParameter("StratumPorts",   [int[]]$stratumPorts).
+                AddParameter("PingTimeoutMs",  $script:PING_TIMEOUT_MS).
+                AddParameter("TcpTimeoutMs",   $script:TCP_TIMEOUT_MS).
+                AddParameter("AppTimeoutMs",   $script:APP_TIMEOUT_MS).
+                AddParameter("MaxBufferBytes", $script:MAX_BUFFER_BYTES).
+                AddParameter("ValidateTls",    $script:VALIDATE_TLS).
+                AddParameter("HttpMethod",     $script:HTTP_METHOD).
+                AddParameter("HttpVersion",    $script:HTTP_VERSION)
 
             $handles += [PSCustomObject]@{
                 Host   = $s
