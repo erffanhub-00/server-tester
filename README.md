@@ -1,9 +1,9 @@
 # 🚀 Server Tester - POWER EDITION
 
 <p align="center">
-  <img src="https://img.shields.io/badge/PowerShell-5.1%2B-blue?style=for-the-badge&logo=powershell">
+  <img src="https://img.shields.io/badge/PowerShell-7%2B-blue?style=for-the-badge&logo=powershell">
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-informational?style=for-the-badge">
-  <img src="https://img.shields.io/badge/Version-v2.1.0-success?style=for-the-badge">
+  <img src="https://img.shields.io/badge/Version-v2.2.0-success?style=for-the-badge">
   <img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge">
 </p>
 
@@ -20,9 +20,11 @@ Server Tester is a PowerShell CLI tool for testing network latency, packet loss,
   * TCP connection time
   * Application protocol handshake
 
-* ⚡ **Parallel testing** with PowerShell runspaces
+* ⚡ **Parallel testing** with PowerShell runspaces (tunable with `-MaxWorkers`)
 
 * 🔌 **ICMP, TCP, HTTP, HTTPS and Stratum V1**
+
+* 🔒 **TLS certificate validation** (on by default, `-ValidateTls`)
 
 * 📊 **Full statistics** — Min / Avg / P50 / P95 / P99 / Max
 
@@ -30,7 +32,7 @@ Server Tester is a PowerShell CLI tool for testing network latency, packet loss,
 
 * 🎯 **User-friendly Status** — `OK` / `Reachable` / `Degraded` / `Down`
 
-* 🧩 **JSON-based configuration** with strict validation
+* 🧩 **JSON-based configuration** with strict validation (bad ports, bad host names and duplicate servers are caught before testing)
 
 * 📁 **Clean output** — Simplified CSV + Structured JSON
 
@@ -77,8 +79,18 @@ Each value is measured independently and is not derived from another layer.
 
 ```text
 server-tester/
-├── ServerTester.ps1
+├── ServerTester.ps1          # Entry script: parameters, paths, module loading
+├── ServerTester.Tests.ps1    # Pester tests
+├── src/
+│   ├── State.ps1             # Version, constants, theme, cleanup
+│   ├── UI.ps1                # Console output primitives
+│   ├── Config.ps1            # categories.json loading and validation
+│   ├── Scoring.ps1           # Status, scoring, best-port selection
+│   ├── Worker.ps1            # Parallel measurement worker (ICMP/TCP/HTTP/HTTPS/Stratum)
+│   ├── Output.ps1            # Ranking display, CSV/JSON export, server detail
+│   └── Menu.ps1              # Interactive menu, category picker, test runs
 ├── categories.json
+├── CHANGELOG.md
 ├── LICENSE
 ├── .gitignore
 ├── .gitattributes
@@ -87,6 +99,8 @@ server-tester/
 └── output/
     └── .gitkeep
 ```
+
+`ServerTester.ps1` is a thin entry point: it reads the CLI parameters, resolves the config/output paths, dot-sources the modules in `src/` (same script scope, so all `$script:` state is shared), and then runs the menu or a single category. The measurement worker (`$script:WorkerScript` in `src/Worker.ps1`) is self-contained on purpose — runspaces cannot see the main session, so every function it needs lives inside it.
 
 ---
 
@@ -108,8 +122,10 @@ run.bat
 Or:
 
 ```powershell
-powershell -ExecutionPolicy RemoteSigned -File ServerTester.ps1
+pwsh -File ServerTester.ps1
 ```
+
+`run.bat` prefers `pwsh` (PowerShell 7) and falls back to Windows PowerShell 5.1.
 
 ### Linux / macOS
 
@@ -122,6 +138,8 @@ Or:
 ```bash
 pwsh -File ServerTester.ps1
 ```
+
+`run.sh` checks that `pwsh` exists and is version 7 or later.
 
 ---
 
@@ -152,6 +170,17 @@ pwsh -File ServerTester.ps1 `
     -NoMenu
 ```
 
+### Fewer workers, longer timeouts
+
+```powershell
+pwsh -File ServerTester.ps1 `
+    -CategoryName cdn `
+    -Packets 10 `
+    -MaxWorkers 5 `
+    -AppTimeoutMs 10000 `
+    -NoMenu
+```
+
 ---
 
 ## 📋 CLI Reference
@@ -164,12 +193,14 @@ pwsh -File ServerTester.ps1 `
 | `-OutputDir`    | `output`          | Report directory                |
 | `-NoMenu`       | Off               | Skip interactive menu (requires `-CategoryName`) |
 | `-ValidateTls`  | `true`            | Validate TLS certificates (use `-ValidateTls:$false` to skip) |
+| `-MaxWorkers`   | `20`              | Max parallel workers (1-50) |
+| `-PingTimeoutMs` | `2000`           | ICMP timeout per packet in ms (100-60000) |
+| `-TcpTimeoutMs` | `3000`            | TCP connect timeout in ms (100-60000) |
+| `-AppTimeoutMs` | `5000`            | Application test timeout in ms (100-60000) |
+| `-HttpMethod`   | `HEAD`            | HTTP method: `HEAD` or `GET` |
+| `-HttpVersion`  | `1.1`             | HTTP version: `1.0` or `1.1` |
 
-Packet range:
-
-```text
-1 - 500
-```
+`-NoMenu` without `-CategoryName` (or vice versa) is an error and exits with code 1.
 
 ---
 
@@ -200,6 +231,10 @@ Categories are defined in `categories.json`.
 * Protocol ports must exist in `ports`
 * A port can belong to only one application protocol
 * Ports without a protocol are tested with TCP only
+* Server names must be valid host names or IPs (letters, digits, `. - : [ ]` only — no spaces or line breaks, so no header injection is possible)
+* Duplicate servers in a category are tested once; the duplicates are listed and skipped with a warning
+
+A category that fails validation is skipped with a clear error message instead of crashing the run.
 
 ---
 
@@ -248,6 +283,8 @@ Results are automatically exported as **CSV** and **JSON** — both user-friendl
 ```
 
 **Perfect for Excel, Google Sheets, or any spreadsheet tool.**
+
+An HTTP status only counts as OK for 200-399; a 404 or 500 is not OK. `TLS Valid` is `True` only when TLS validation actually ran and passed, `False` when the certificate failed validation, and empty when validation was skipped or not applicable.
 
 ### JSON — Structured for automation
 
@@ -309,7 +346,7 @@ Example:
 
 ## 🧮 Scoring
 
-The project includes a **project-specific heuristic score**.
+The project includes a **project-specific heuristic score**. Lower is better.
 
 ```text
 score =
@@ -331,7 +368,12 @@ No protocol working  +150
 
 > The score is not an industry standard or universal network-quality metric.
 
-When ICMP fails and no protocol works, fallback values (9999) apply, which is why a Down server scores above 11000.
+### Fallbacks when ICMP returns no data
+
+When a server returns no ICMP samples at all, the score uses named fallbacks (`$script:SCORE_NO_DATA` and `$script:SCORE_PROTO_ONLY_*` in `src/Scoring.ps1`) instead of silently inventing numbers:
+
+* No ICMP data and no working protocol: avg/jitter/p95 fall back to **9999**, so the server always sorts last. A Down server (100% loss, no protocol) therefore scores **11149** = 100×10 + 9999×0.5 + 9999×0.3 + 9999×0.2 + 150.
+* No ICMP data but an application protocol still answers: the server is reachable, so pessimistic but finite fallbacks apply (avg 500, jitter 100, p95 500).
 
 ---
 
@@ -347,6 +389,8 @@ The project includes predefined categories for:
 * 💱 Crypto Exchanges
 * 🧪 Custom Test Set
 
+The `dns` category only checks TCP/HTTPS reachability of public DNS servers — it does not send a real DNS query.
+
 ---
 
 ## 📸 Demo
@@ -356,7 +400,7 @@ The project includes predefined categories for:
 ```text
 ======================================================================================================================
                                                     SERVER TESTER
-                                               POWER EDITION  -  v2.1.0
+                                               POWER EDITION  -  v2.2.0
 ======================================================================================================================
 
   RESULTS  Public DNS Resolvers
@@ -408,16 +452,41 @@ The project includes predefined categories for:
 * Stratum V1 is supported; Stratum V2 is not.
 * P95/P99 are less meaningful with very small packet counts.
 * Network results can vary depending on routing, congestion, ISP, and server load.
+* There is no built-in rate limiting beyond `-MaxWorkers` and `-Packets` — point it only at servers you own or have permission to test, and lower both values for fragile targets.
+* The `dns` category checks reachability only; it sends no DNS query.
 
 ---
 
 ## 💻 Requirements
 
-* PowerShell 5.1+ on Windows
-* PowerShell 7+ on Linux/macOS
+* PowerShell 7+ (recommended, on all platforms)
+* Windows PowerShell 5.1 also runs the tool via `run.bat`, but it is not covered by CI
 * Network access to target servers
 * On Linux, ICMP ping may need elevated privileges (CAP_NET_RAW) or root
 * No external dependencies
+
+---
+
+## 🛠️ Development
+
+Run the tests (Pester 5 or later):
+
+```powershell
+Invoke-Pester -Path ServerTester.Tests.ps1 -Output Detailed
+```
+
+Lint (PSScriptAnalyzer, errors fail CI):
+
+```powershell
+Invoke-ScriptAnalyzer -Path ServerTester.ps1 -Severity Error
+Invoke-ScriptAnalyzer -Path src -Severity Error
+```
+
+Notes for contributors:
+
+* The interactive UI intentionally uses `Write-Host` — this is a console tool, and machine-readable output is the CSV/JSON export. PSScriptAnalyzer warnings about `Write-Host` are expected.
+* The empty `catch {}` blocks are all best-effort cleanup (closing sockets, disposing runspaces, clearing the console) or documented non-fatal paths (DNS failure → IP `N/A`, incomplete Stratum JSON → keep reading). A failing cleanup must not raise a second error.
+* `Get-Percentile` lives inside the worker scriptblock (`src/Worker.ps1`) because runspaces cannot see the main session; the tests extract it via AST for unit testing.
 
 ---
 
@@ -428,7 +497,7 @@ Contributions are welcome.
 1. Fork the repository
 2. Create a feature branch
 3. Make your changes
-4. Test them
+4. Test them (`Invoke-Pester`)
 5. Open a Pull Request
 
 Bug reports and feature requests are also welcome.
@@ -455,10 +524,10 @@ Do not use it to attack, overload, or scan unauthorized infrastructure. Respect 
 
 Computer Engineering Student focused on **AI, Tools & 3D Printing**.
 
-[![Telegram](https://img.shields.io/badge/Telegram-erffan__hub-blue?style=for-the-badge\&logo=telegram)](https://t.me/erffan_hub)
-[![Twitter](https://img.shields.io/badge/Twitter-@Erffanhub__00-000000?style=for-the-badge\&logo=x\&logoColor=white)](https://x.com/Erffanhub_00)
-[![Gist](https://img.shields.io/badge/Gist-Profile-000000?style=for-the-badge\&logo=github)](https://gist.github.com/erffanhub-00)
-[![GitHub](https://img.shields.io/badge/GitHub-Profile-000000?style=for-the-badge\&logo=github)](https://github.com/erffanhub-00)
+[![Telegram](https://img.shields.io/badge/Telegram-erffan__hub-blue?style=for-the-badge&logo=telegram)](https://t.me/erffan_hub)
+[![Twitter](https://img.shields.io/badge/Twitter-@Erffanhub__00-000000?style=for-the-badge&logo=x&logoColor=white)](https://x.com/Erffanhub_00)
+[![Gist](https://img.shields.io/badge/Gist-Profile-000000?style=for-the-badge&logo=github)](https://gist.github.com/erffanhub-00)
+[![GitHub](https://img.shields.io/badge/GitHub-Profile-000000?style=for-the-badge&logo=github)](https://github.com/erffanhub-00)
 
 ---
 

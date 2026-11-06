@@ -28,3 +28,6 @@ ehthumbs.db
 *.bak
 *.orig
 *.rej
+
+# Test results
+TestResults.xml

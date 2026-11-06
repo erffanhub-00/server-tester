@@ -3,58 +3,59 @@
     . $scriptPath
 
     # Get-Percentile lives inside the worker scriptblock, so pull it out for testing.
-    $ast = [System.Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$null, [ref]$null)
+    $workerPath = Join-Path $PSScriptRoot 'src' 'Worker.ps1'
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($workerPath, [ref]$null, [ref]$null)
     $fn = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-Percentile' }, $true) |
         Select-Object -First 1
     if ($fn) { . ([scriptblock]::Create($fn.Extent.Text)) }
-}
 
-function New-TestRow {
-    param(
-        [double]$Loss = 0,
-        $Avg = 20,
-        $Jitter = 2,
-        $P95 = 30,
-        $Max = 40,
-        [string]$StratumPorts = '',
-        [string]$HttpsPorts = '',
-        [string]$HttpPorts = '',
-        [string]$BestPort = '',
-        [string]$BestProtocol = '',
-        $PortResults = $null
-    )
-    return [pscustomobject]@{
-        Host         = 'example.com'
-        Loss         = $Loss
-        Avg          = $Avg
-        Jitter       = $Jitter
-        P95          = $P95
-        Max          = $Max
-        StratumPorts = $StratumPorts
-        HttpsPorts   = $HttpsPorts
-        HttpPorts    = $HttpPorts
-        BestPort     = $BestPort
-        BestProtocol = $BestProtocol
-        PortResults  = $PortResults
+    function New-TestRow {
+        param(
+            [double]$Loss = 0,
+            $Avg = 20,
+            $Jitter = 2,
+            $P95 = 30,
+            $Max = 40,
+            [string]$StratumPorts = '',
+            [string]$HttpsPorts = '',
+            [string]$HttpPorts = '',
+            [string]$BestPort = '',
+            [string]$BestProtocol = '',
+            $PortResults = $null
+        )
+        return [pscustomobject]@{
+            Host         = 'example.com'
+            Loss         = $Loss
+            Avg          = $Avg
+            Jitter       = $Jitter
+            P95          = $P95
+            Max          = $Max
+            StratumPorts = $StratumPorts
+            HttpsPorts   = $HttpsPorts
+            HttpPorts    = $HttpPorts
+            BestPort     = $BestPort
+            BestProtocol = $BestProtocol
+            PortResults  = $PortResults
+        }
     }
-}
 
-function New-TestCategory {
-    param(
-        [string]$Name = 'Test',
-        [string[]]$Servers = @('example.com'),
-        [int[]]$Ports = @(80, 443),
-        $HttpPorts = @(80),
-        $HttpsPorts = @(443),
-        $StratumPorts = @()
-    )
-    return [pscustomobject]@{
-        name          = $Name
-        servers       = $Servers
-        ports         = $Ports
-        http_ports    = $HttpPorts
-        https_ports   = $HttpsPorts
-        stratum_ports = $StratumPorts
+    function New-TestCategory {
+        param(
+            [string]$Name = 'Test',
+            [string[]]$Servers = @('example.com'),
+            [int[]]$Ports = @(80, 443),
+            $HttpPorts = @(80),
+            $HttpsPorts = @(443),
+            $StratumPorts = @()
+        )
+        return [pscustomobject]@{
+            name          = $Name
+            servers       = $Servers
+            ports         = $Ports
+            http_ports    = $HttpPorts
+            https_ports   = $HttpsPorts
+            stratum_ports = $StratumPorts
+        }
     }
 }
 
@@ -224,5 +225,100 @@ Describe 'Get-BestPortEntry' {
     It 'returns null when the best port has no entry' {
         $row = New-TestRow -BestPort '9999' -PortResults @()
         Get-BestPortEntry $row | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'Get-UniqueServers' {
+    It 'keeps the first occurrence and reports the rest' {
+        $r = Get-UniqueServers @('a.com', 'b.com', 'a.com')
+        $r.Servers.Count | Should -Be 2
+        $r.Servers | Should -Be @('a.com', 'b.com')
+        $r.Duplicates | Should -Be @('a.com')
+    }
+
+    It 'treats host names case-insensitively' {
+        $r = Get-UniqueServers @('Example.COM', 'example.com')
+        $r.Servers.Count | Should -Be 1
+        $r.Duplicates.Count | Should -Be 1
+    }
+
+    It 'preserves order' {
+        $r = Get-UniqueServers @('c.com', 'a.com', 'b.com', 'a.com')
+        $r.Servers | Should -Be @('c.com', 'a.com', 'b.com')
+    }
+
+    It 'returns no duplicates for a clean list' {
+        $r = Get-UniqueServers @('a.com', 'b.com')
+        $r.Duplicates.Count | Should -Be 0
+    }
+
+    It 'handles an empty list' {
+        $r = Get-UniqueServers @()
+        $r.Servers.Count | Should -Be 0
+        $r.Duplicates.Count | Should -Be 0
+    }
+}
+
+Describe 'Get-Score fallbacks' {
+    It 'uses the proto-only fallbacks when ICMP fails but HTTPS works' {
+        $row = New-TestRow -Loss 100 -Avg $null -Jitter $null -P95 $null -Max $null -HttpsPorts '443'
+        Get-Score $row | Should -Be 1370
+    }
+}
+
+Describe 'Format-Ms and Format-Pct' {
+    It 'formats a latency value' {
+        Format-Ms 12.345 | Should -Be '12.3 ms'
+    }
+
+    It 'returns N/A for null latency' {
+        Format-Ms $null | Should -Be 'N/A'
+    }
+
+    It 'formats a percentage' {
+        Format-Pct 12.34 | Should -Be '12.3%'
+    }
+
+    It 'returns N/A for null percentage' {
+        Format-Pct $null | Should -Be 'N/A'
+    }
+}
+
+Describe 'Get-StatusColor' {
+    It 'maps each status to a color' {
+        Get-StatusColor 'OK' | Should -Be 'Green'
+        Get-StatusColor 'Reachable' | Should -Be 'Cyan'
+        Get-StatusColor 'Degraded' | Should -Be 'Yellow'
+        Get-StatusColor 'Down' | Should -Be 'Red'
+    }
+}
+
+Describe 'CLI parameters' {
+    It 'exposes the tuning knobs with safe defaults' {
+        $entryPath = Join-Path $PSScriptRoot 'ServerTester.ps1'
+        $entryAst = [System.Management.Automation.Language.Parser]::ParseFile($entryPath, [ref]$null, [ref]$null)
+        $byName = @{}
+        foreach ($param in $entryAst.ParamBlock.Parameters) {
+            $byName[$param.Name.VariablePath.UserPath] = $param
+        }
+
+        $byName['MaxWorkers'].DefaultValue.Value | Should -Be 20
+        $byName['PingTimeoutMs'].DefaultValue.Value | Should -Be 2000
+        $byName['TcpTimeoutMs'].DefaultValue.Value | Should -Be 3000
+        $byName['AppTimeoutMs'].DefaultValue.Value | Should -Be 5000
+        $byName['HttpMethod'].DefaultValue.Value | Should -Be 'HEAD'
+        $byName['HttpVersion'].DefaultValue.Value | Should -Be '1.1'
+        $byName['ValidateTls'].DefaultValue.Extent.Text | Should -Be '$true'
+    }
+}
+
+Describe 'Packets parameter collision' {
+    It 'does not reset the -Packets parameter to the default' {
+        # The old $script:PACKETS variable had the same name
+        # (case-insensitive) as the -Packets parameter, so loading the
+        # script reset any -Packets value to 20 in -NoMenu mode.
+        Get-Variable -Name 'PACKETS' -Scope Script -ErrorAction SilentlyContinue |
+            Should -BeNullOrEmpty
+        $script:MenuPackets | Should -Be 20
     }
 }
