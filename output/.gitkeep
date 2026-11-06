@@ -1,4 +1,0 @@
-output/*.csv
-output/*.json
-output/*.log
-!output/.gitkeep

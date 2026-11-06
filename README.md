@@ -108,13 +108,12 @@ run.bat
 Or:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File ServerTester.ps1
+powershell -ExecutionPolicy RemoteSigned -File ServerTester.ps1
 ```
 
 ### Linux / macOS
 
 ```bash
-chmod +x run.sh
 ./run.sh
 ```
 
@@ -160,10 +159,11 @@ pwsh -File ServerTester.ps1 `
 | Parameter       | Default           | Description                     |
 | --------------- | ----------------- | ------------------------------- |
 | `-CategoryName` | —                 | Category from `categories.json` |
-| `-Packets`      | `20`              | Number of ICMP tests per server |
+| `-Packets`      | `20`              | Number of ICMP tests per server (1-500, enforced) |
 | `-ConfigFile`   | `categories.json` | Configuration file              |
 | `-OutputDir`    | `output`          | Report directory                |
-| `-NoMenu`       | Off               | Skip interactive menu           |
+| `-NoMenu`       | Off               | Skip interactive menu (requires `-CategoryName`) |
+| `-ValidateTls`  | `true`            | Validate TLS certificates (use `-ValidateTls:$false` to skip) |
 
 Packet range:
 
@@ -238,13 +238,13 @@ Each server gets a clear status so you can understand results at a glance:
 
 Results are automatically exported as **CSV** and **JSON** — both user-friendly.
 
-### CSV — Simplified, 12 columns
+### CSV — Simplified, 14 columns
 
 ```csv
-"Rank","Server","IP","Category","Status","Packet Loss %","Avg Latency","P95 Latency","Jitter","Best Port","Best Protocol","Score"
-"1","1.1.1.1","1.1.1.1","dns","OK","0","148.3","165","12.89","443","HTTPS","101.02"
-"2","9.9.9.9","9.9.9.9","dns","Reachable","0","147.75","165","9.95","","","259.86"
-"5","208.67.222.222","208.67.222.222","dns","Down","100",,,,"","","11149"
+"Rank","Server","IP","Category","Status","Packet Loss %","Avg Latency","P95 Latency","Jitter","Best Port","Best Protocol","TLS Valid","HTTP Status","Score"
+"1","1.1.1.1","1.1.1.1","dns","OK","0","148.3","165","12.89","443","HTTPS","True","301","101.02"
+"2","9.9.9.9","9.9.9.9","dns","Reachable","0","147.75","165","9.95","","","","","259.86"
+"5","208.67.222.222","208.67.222.222","dns","Down","100",,,,"","","","","11149"
 ```
 
 **Perfect for Excel, Google Sheets, or any spreadsheet tool.**
@@ -279,7 +279,9 @@ Results are automatically exported as **CSV** and **JSON** — both user-friendl
       "http_ok": [],
       "best": 443,
       "best_protocol": "HTTPS",
-      "best_latency_ms": 643.8
+      "best_latency_ms": 643.8,
+      "tls_valid": true,
+      "http_status": 301
     },
     "score": 101.02
   }
@@ -329,6 +331,8 @@ No protocol working  +150
 
 > The score is not an industry standard or universal network-quality metric.
 
+When ICMP fails and no protocol works, fallback values (9999) apply, which is why a Down server scores above 11000.
+
 ---
 
 ## 🗂️ Included Categories
@@ -346,17 +350,6 @@ The project includes predefined categories for:
 ---
 
 ## 📸 Demo
-
-> Screenshots and demo GIF will be added here.
-
-```text
-docs/
-├── screenshots/
-│   ├── menu.png
-│   ├── results.png
-│   └── ranking.png
-└── demo.gif
-```
 
 ### Sample Output
 
@@ -411,7 +404,7 @@ docs/
 
 * ICMP may be blocked by firewalls or ISPs.
 * TCP/application tests may still work when ICMP fails.
-* TLS certificate validation is disabled by default.
+* TLS certificate validation is enabled by default; pass `-ValidateTls:$false` to skip it (not recommended).
 * Stratum V1 is supported; Stratum V2 is not.
 * P95/P99 are less meaningful with very small packet counts.
 * Network results can vary depending on routing, congestion, ISP, and server load.
@@ -423,6 +416,7 @@ docs/
 * PowerShell 5.1+ on Windows
 * PowerShell 7+ on Linux/macOS
 * Network access to target servers
+* On Linux, ICMP ping may need elevated privileges (CAP_NET_RAW) or root
 * No external dependencies
 
 ---

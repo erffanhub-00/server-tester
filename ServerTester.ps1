@@ -1,5 +1,5 @@
 ﻿# ========================================================
-# Server Tester - POWER EDITION  v2.1.0
+# Server Tester - POWER EDITION
 # ========================================================
 # Multi-protocol, multi-category network tester.
 # Config-driven (categories.json). Cross-platform.
@@ -16,10 +16,12 @@
 [CmdletBinding()]
 param(
     [string]$CategoryName,
+    [ValidateRange(1, 500)]
     [int]   $Packets,
     [string]$ConfigFile = "categories.json",
     [string]$OutputDir  = "output",
-    [switch]$NoMenu
+    [switch]$NoMenu,
+    [switch]$ValidateTls = $true
 )
 
 # ========================================================
@@ -39,8 +41,8 @@ $script:MAX_BUFFER_BYTES   = 65536
 # Concurrency
 $script:MAX_WORKERS        = 20
 
-# TLS validation default
-$script:VALIDATE_TLS       = $false
+# TLS validation, on by default
+$script:VALIDATE_TLS       = [bool]$ValidateTls
 
 # HTTP method
 $script:HTTP_METHOD        = "HEAD"   # HEAD or GET
@@ -230,10 +232,40 @@ function Get-StatusColor {
 
 function Get-BestProtocol {
     param($Row)
+
+    # Best protocol is the protocol of the chosen best port.
+    if ($Row.BestProtocol) {
+        switch ($Row.BestProtocol) {
+            "stratum" { return "Stratum" }
+            "https"   { return "HTTPS" }
+            "http"    { return "HTTP" }
+            default   { return "" }
+        }
+    }
+
+    if ($Row.PortResults) {
+        $entry = Get-BestPortEntry $Row
+        if ($entry) {
+            switch ($entry.Protocol) {
+                "stratum" { return "Stratum" }
+                "https"   { return "HTTPS" }
+                "http"    { return "HTTP" }
+                default   { return "" }
+            }
+        }
+        return ""
+    }
+
     if     ($Row.StratumPorts -and $Row.StratumPorts -ne "") { return "Stratum" }
     elseif ($Row.HttpsPorts   -and $Row.HttpsPorts   -ne "") { return "HTTPS" }
     elseif ($Row.HttpPorts    -and $Row.HttpPorts    -ne "") { return "HTTP" }
     else                                                     { return "" }
+}
+
+function Get-BestPortEntry {
+    param($Row)
+    if (-not $Row.PortResults -or -not $Row.BestPort) { return $null }
+    return @($Row.PortResults | Where-Object { "$($_.Port)" -eq "$($Row.BestPort)" }) | Select-Object -First 1
 }
 
 # ========================================================
@@ -296,12 +328,24 @@ function Test-CategoryData {
         return $false
     }
 
+    foreach ($s in @($Cat.servers)) {
+        if ($s -isnot [string] -or [string]::IsNullOrWhiteSpace($s) -or $s -notmatch '^[A-Za-z0-9._\-:\[\]]+$') {
+            Write-Host "  [!] $Key : invalid server name '$s'" -ForegroundColor $script:Theme.Danger
+            return $false
+        }
+    }
+
     $ports        = ConvertTo-PortArray $Cat.ports         "ports"         $Key
     $httpPorts    = ConvertTo-PortArray $Cat.http_ports    "http_ports"    $Key
     $httpsPorts   = ConvertTo-PortArray $Cat.https_ports   "https_ports"   $Key
     $stratumPorts = ConvertTo-PortArray $Cat.stratum_ports "stratum_ports" $Key
 
     if ($null -eq $ports) {
+        return $false
+    }
+
+    if ($null -eq $httpPorts -or $null -eq $httpsPorts -or $null -eq $stratumPorts) {
+        Write-Host "  [!] $Key : invalid protocol ports" -ForegroundColor $script:Theme.Danger
         return $false
     }
 
@@ -375,7 +419,8 @@ $script:WorkerScript = {
         [int]   $MaxBufferBytes,
         [bool]  $ValidateTls,
         [string]$HttpMethod,
-        [string]$HttpVersion
+        [string]$HttpVersion,
+        [string]$ToolVersion
     )
 
     function Test-InList {
@@ -453,7 +498,7 @@ $script:WorkerScript = {
     }
 
     function Measure-Http {
-        param([string]$Name, [int]$Port, [int]$TimeoutMs, [string]$Method, [string]$Version)
+        param([string]$Name, [int]$Port, [int]$TimeoutMs, [string]$Method, [string]$Version, [string]$ToolVersion)
 
         $r = [PSCustomObject]@{
             TcpTime  = $null
@@ -481,7 +526,7 @@ $script:WorkerScript = {
             $stream.WriteTimeout = $TimeoutMs
 
             $hostHeader = $Name
-            $req = "$Method / HTTP/$Version`r`nHost: $hostHeader`r`nUser-Agent: ServerTester/$($Global:ST_VERSION)`r`nAccept: */*`r`nConnection: close`r`n`r`n"
+            $req = "$Method / HTTP/$Version`r`nHost: $hostHeader`r`nUser-Agent: ServerTester/$ToolVersion`r`nAccept: */*`r`nConnection: close`r`n`r`n"
 
             $swApp = [System.Diagnostics.Stopwatch]::StartNew()
             $bytes = [System.Text.Encoding]::ASCII.GetBytes($req)
@@ -507,7 +552,7 @@ $script:WorkerScript = {
             $resp = $sb.ToString()
             if ($resp -match '^HTTP/\d\.\d\s+(\d{3})') {
                 $r.Status = [int]$matches[1]
-                $r.Ok = $true
+                $r.Ok = ($r.Status -ge 200 -and $r.Status -lt 400)
             } else {
                 $r.Error = "no valid status line"
             }
@@ -520,7 +565,7 @@ $script:WorkerScript = {
     }
 
     function Measure-Https {
-        param([string]$Name, [int]$Port, [int]$TimeoutMs, [string]$Method, [string]$Version, [bool]$ValidateTls)
+        param([string]$Name, [int]$Port, [int]$TimeoutMs, [string]$Method, [string]$Version, [bool]$ValidateTls, [string]$ToolVersion)
 
         $r = [PSCustomObject]@{
             TcpTime     = $null
@@ -562,7 +607,7 @@ $script:WorkerScript = {
                 $ssl.AuthenticateAsClient($Name, $null, [System.Security.Authentication.SslProtocols]::None, $false)
                 $swTls.Stop()
                 $r.TlsTime = [Math]::Round($swTls.Elapsed.TotalMilliseconds, 2)
-                $r.TlsValid = $true
+                $r.TlsValid = [bool]$ValidateTls
             } catch {
                 $swTls.Stop()
                 $r.Error = "tls: $($_.Exception.Message)"
@@ -571,7 +616,7 @@ $script:WorkerScript = {
             }
 
             $hostHeader = $Name
-            $req = "$Method / HTTP/$Version`r`nHost: $hostHeader`r`nUser-Agent: ServerTester/$($Global:ST_VERSION)`r`nAccept: */*`r`nConnection: close`r`n`r`n"
+            $req = "$Method / HTTP/$Version`r`nHost: $hostHeader`r`nUser-Agent: ServerTester/$ToolVersion`r`nAccept: */*`r`nConnection: close`r`n`r`n"
 
             $swApp = [System.Diagnostics.Stopwatch]::StartNew()
             $bytes = [System.Text.Encoding]::ASCII.GetBytes($req)
@@ -598,7 +643,7 @@ $script:WorkerScript = {
             $resp = $sb.ToString()
             if ($resp -match '^HTTP/\d\.\d\s+(\d{3})') {
                 $r.Status = [int]$matches[1]
-                $r.Ok = $true
+                $r.Ok = ($r.Status -ge 200 -and $r.Status -lt 400)
             } else {
                 $r.Error = "no valid status line"
             }
@@ -612,7 +657,7 @@ $script:WorkerScript = {
     }
 
     function Measure-Stratum {
-        param([string]$Name, [int]$Port, [int]$TimeoutMs, [int]$MaxBuf)
+        param([string]$Name, [int]$Port, [int]$TimeoutMs, [int]$MaxBuf, [string]$ToolVersion)
 
         $r = [PSCustomObject]@{
             TcpTime  = $null
@@ -639,7 +684,7 @@ $script:WorkerScript = {
             $stream.ReadTimeout  = $TimeoutMs
             $stream.WriteTimeout = $TimeoutMs
 
-            $req = '{"id":1,"method":"mining.subscribe","params":["ServerTester/2.1"]}' + "`n"
+            $req = '{"id":1,"method":"mining.subscribe","params":["ServerTester/' + $ToolVersion + '"]}' + "`n"
             $bytes = [System.Text.Encoding]::ASCII.GetBytes($req)
 
             $swApp = [System.Diagnostics.Stopwatch]::StartNew()
@@ -691,7 +736,7 @@ $script:WorkerScript = {
     # ================================================
     # MAIN WORKER FLOW
     # ================================================
-    $Global:ST_VERSION = "2.1.0"
+
     $dns = Resolve-IP $HostName
 
     $icmp = Measure-Icmp -Name $HostName -Count $Packets -TimeoutMs $PingTimeoutMs
@@ -736,7 +781,7 @@ $script:WorkerScript = {
 
         if (Test-InList -Value $p -List $StratumPorts) {
             $entry.Protocol = "stratum"
-            $r = Measure-Stratum -Name $HostName -Port $p -TimeoutMs $AppTimeoutMs -MaxBuf $MaxBufferBytes
+            $r = Measure-Stratum -Name $HostName -Port $p -TimeoutMs $AppTimeoutMs -MaxBuf $MaxBufferBytes -ToolVersion $ToolVersion
             $entry.TcpTime      = $r.TcpTime
             $entry.ProtocolTime = $r.AppTime
             $entry.ProtocolOk   = $r.Ok
@@ -744,9 +789,9 @@ $script:WorkerScript = {
 
         } elseif (Test-InList -Value $p -List $HttpsPorts) {
             $entry.Protocol = "https"
-            $r = Measure-Https -Name $HostName -Port $p -TimeoutMs $AppTimeoutMs -Method $HttpMethod -Version $HttpVersion -ValidateTls $ValidateTls
+            $r = Measure-Https -Name $HostName -Port $p -TimeoutMs $AppTimeoutMs -Method $HttpMethod -Version $HttpVersion -ValidateTls $ValidateTls -ToolVersion $ToolVersion
             $entry.TcpTime      = $r.TcpTime
-            $entry.ProtocolTime = $r.TotalTime
+            $entry.ProtocolTime = $r.AppTime
             $entry.ProtocolOk   = $r.Ok
             $entry.Status       = $r.Status
             $entry.Error        = $r.Error
@@ -754,7 +799,7 @@ $script:WorkerScript = {
 
         } elseif (Test-InList -Value $p -List $HttpPorts) {
             $entry.Protocol = "http"
-            $r = Measure-Http -Name $HostName -Port $p -TimeoutMs $AppTimeoutMs -Method $HttpMethod -Version $HttpVersion
+            $r = Measure-Http -Name $HostName -Port $p -TimeoutMs $AppTimeoutMs -Method $HttpMethod -Version $HttpVersion -ToolVersion $ToolVersion
             $entry.TcpTime      = $r.TcpTime
             $entry.ProtocolTime = $r.AppTime
             $entry.ProtocolOk   = $r.Ok
@@ -787,6 +832,7 @@ $script:WorkerScript = {
     }
 
     $bestPort = ""
+    $bestProtocol = ""
     $bestTime = [double]::MaxValue
     foreach ($p in $Ports) {
         $e = $portResults[$p]
@@ -794,20 +840,12 @@ $script:WorkerScript = {
             if ([double]$e.ProtocolTime -lt $bestTime) {
                 $bestTime = [double]$e.ProtocolTime
                 $bestPort = "$p"
+                $bestProtocol = $e.Protocol
             }
         }
     }
 
-    # ⭐ NEW: Port details بدون "ms" تکراری
-    $portDetail = @()
-    foreach ($p in $Ports) {
-        $e = $portResults[$p]
-        $tcpStr = if ($null -eq $e.TcpTime)      { "-" } else { "{0:F1}" -f $e.TcpTime }
-        $appStr = if ($null -eq $e.ProtocolTime) { "-" } else { "{0:F1}" -f $e.ProtocolTime }
-        $stStr  = if ($null -eq $e.Status)       { "" }  else { " [HTTP $($e.Status)]" }
-        $okStr  = if ($e.ProtocolOk)             { "OK" } else { "FAIL" }
-        $portDetail += "${p}:$($e.Protocol):${tcpStr}:${appStr}:$okStr$stStr"
-    }
+    $portResultsList = @($portResults.Values | Sort-Object Port)
 
     return [PSCustomObject]@{
         Host              = $HostName
@@ -835,7 +873,8 @@ $script:WorkerScript = {
         HttpsPorts        = ($httpsOkList   -join ",")
 
         BestPort          = $bestPort
-        PortDetails       = ($portDetail -join " | ")
+        BestProtocol      = $bestProtocol
+        PortResults       = $portResultsList
 
         Loss              = $icmpLoss
         Avg               = $icmpAvg
@@ -924,7 +963,7 @@ function Show-Ranking {
         Select-Object *, @{n='Score'; e={ Get-Score $_ }} |
         Sort-Object Score
 
-    # ⭐ NEW header with STATUS
+
     $hdr = "{0,-4}{1,-22}{2,-12}{3,8}{4,10}{5,10}{6,10}  {7,-16}{8,8}" -f `
         "#","SERVER","STATUS","LOSS","AVG","P95","JITTER","BEST","SCORE"
     Write-Host "  " -NoNewline
@@ -981,15 +1020,17 @@ function Show-Ranking {
 
     # ---------- Export ----------
     $ts       = Get-Date -Format 'yyyyMMdd_HHmmss'
-    $csvName  = "server_tester_${CategoryKey}_${ts}.csv"
+    $safeKey  = $CategoryKey -replace '[^a-zA-Z0-9_-]', '_'
+    $csvName  = "server_tester_${safeKey}_${ts}.csv"
     $csv      = Join-Path $script:OutputPath $csvName
-    $jsonName = "server_tester_${CategoryKey}_${ts}.json"
+    $jsonName = "server_tester_${safeKey}_${ts}.json"
     $json     = Join-Path $script:OutputPath $jsonName
 
-    # ⭐ NEW: Simple CSV for normal users
+    # CSV export
     try {
         $rankIdx = 1
         $csvData = foreach ($s in $scored) {
+            $bestEntry = Get-BestPortEntry $s
             [PSCustomObject]@{
                 "Rank"           = $rankIdx
                 "Server"         = $s.Host
@@ -1002,6 +1043,8 @@ function Show-Ranking {
                 "Jitter"         = $s.Jitter
                 "Best Port"      = $s.BestPort
                 "Best Protocol"  = Get-BestProtocol $s
+                "TLS Valid"      = $bestEntry.TlsValid
+                "HTTP Status"    = $bestEntry.Status
                 "Score"          = $s.Score
             }
             $rankIdx++
@@ -1014,7 +1057,7 @@ function Show-Ranking {
         Write-Host "  [ERR] CSV: $($_.Exception.Message)" -ForegroundColor $script:Theme.Danger
     }
 
-    # ⭐ NEW: Structured JSON with nested objects
+    # JSON export
     try {
         $jsonData = @()
         $rankIdx = 1
@@ -1037,16 +1080,11 @@ function Show-Ranking {
                 $httpArr = @($s.HttpPorts -split "," | ForEach-Object { [int]$_ })
             }
 
-            # best latency from PortDetails
+            # best latency from PortResults
+            $bestEntry = Get-BestPortEntry $s
             $bestLatency = $null
-            if ($s.BestPort -and $s.PortDetails) {
-                foreach ($segment in ($s.PortDetails -split " \| ")) {
-                    $parts = $segment -split ":"
-                    if ($parts.Count -ge 5 -and $parts[0] -eq "$($s.BestPort)") {
-                        if ($parts[3] -ne "-") { $bestLatency = [double]$parts[3] }
-                        break
-                    }
-                }
+            if ($bestEntry -and $null -ne $bestEntry.ProtocolTime) {
+                $bestLatency = [double]$bestEntry.ProtocolTime
             }
 
             $jsonData += [ordered]@{
@@ -1072,13 +1110,15 @@ function Show-Ranking {
                 }
 
                 ports = [ordered]@{
-                    tcp_open     = $tcpArr
-                    stratum_ok   = $stratArr
-                    https_ok     = $httpsArr
-                    http_ok      = $httpArr
-                    best         = if ($s.BestPort) { [int]$s.BestPort } else { $null }
+                    tcp_open      = $tcpArr
+                    stratum_ok    = $stratArr
+                    https_ok      = $httpsArr
+                    http_ok       = $httpArr
+                    best          = if ($s.BestPort) { [int]$s.BestPort } else { $null }
                     best_protocol = Get-BestProtocol $s
                     best_latency_ms = $bestLatency
+                    tls_valid     = $bestEntry.TlsValid
+                    http_status   = $bestEntry.Status
                 }
 
                 score = $s.Score
@@ -1166,22 +1206,20 @@ function Show-ServerDetail {
     Write-BorderThin
 
     $detailsMap = @{}
-    if ($r.PortDetails) {
-        foreach ($segment in ($r.PortDetails -split " \| ")) {
-            $parts = $segment -split ":"
-            if ($parts.Count -ge 5) {
-                $portNum = $parts[0]
-                $detailsMap[$portNum] = @{
-                    protocol = $parts[1]
-                    tcp      = $parts[2]
-                    app      = $parts[3]
-                    state    = $parts[4]
-                }
+    if ($r.PortResults) {
+        foreach ($e in $r.PortResults) {
+            $detailsMap["$($e.Port)"] = @{
+                protocol = $e.Protocol
+                tcp      = if ($null -eq $e.TcpTime) { "-" } else { "{0:F1}" -f $e.TcpTime }
+                app      = if ($null -eq $e.ProtocolTime) { "-" } else { "{0:F1}" -f $e.ProtocolTime }
+                state    = if ($e.ProtocolOk) { "OK" } else { "FAIL" }
+                status   = $e.Status
+                tlsValid = $e.TlsValid
             }
         }
     }
 
-    # ⭐ NEW: cleaner port scan display
+
     foreach ($p in $Ports) {
         $pStr = "$p"
         Write-Host "  " -NoNewline
@@ -1205,8 +1243,11 @@ function Show-ServerDetail {
                 Write-Host " OPEN  " -ForegroundColor $script:Theme.Success -NoNewline
                 Write-Host $tcpPart -ForegroundColor $script:Theme.Muted -NoNewline
                 Write-Host $appPart -ForegroundColor $script:Theme.Muted -NoNewline
+                $stateText = $d.state
+                if ($null -ne $d.status) { $stateText += " [HTTP $($d.status)]" }
+                if ($d.tlsValid -eq $false) { $stateText += " [TLS invalid]" }
                 Write-Host "  $protoTag " -ForegroundColor $script:Theme.Primary -NoNewline
-                Write-Host "$($d.state)" -ForegroundColor $stateColor
+                Write-Host $stateText -ForegroundColor $stateColor
             }
         } else {
             Write-Host ("  {0,-6}" -f $p) -ForegroundColor $script:Theme.Highlight -NoNewline
@@ -1223,7 +1264,8 @@ function Start-CategoryTest {
     param(
         [string]$CategoryKey,
         $CategoryData,
-        [int]$Packets
+        [int]$Packets,
+        [switch]$Interactive
     )
 
     if (-not (Test-CategoryData $CategoryData $CategoryKey)) {
@@ -1263,7 +1305,7 @@ function Start-CategoryTest {
 
     if ($servers.Count -eq 0) {
         Write-Host "  No servers in this category." -ForegroundColor $script:Theme.Warning
-        Read-Host "  Press Enter to continue" | Out-Null
+        if ($Interactive) { Read-Host "  Press Enter to continue" | Out-Null }
         return
     }
 
@@ -1299,7 +1341,8 @@ function Start-CategoryTest {
                 AddParameter("MaxBufferBytes", $script:MAX_BUFFER_BYTES).
                 AddParameter("ValidateTls",    $script:VALIDATE_TLS).
                 AddParameter("HttpMethod",     $script:HTTP_METHOD).
-                AddParameter("HttpVersion",    $script:HTTP_VERSION)
+                AddParameter("HttpVersion",    $script:HTTP_VERSION).
+                AddParameter("ToolVersion",    $script:VERSION)
 
             $handles += [PSCustomObject]@{
                 Host   = $s
@@ -1392,7 +1435,7 @@ function Start-CategoryTest {
     Show-Ranking -Results $ordered -CategoryKey $CategoryKey
 
     Write-Host ""
-    Read-Host "  Press Enter to continue" | Out-Null
+    if ($Interactive) { Read-Host "  Press Enter to continue" | Out-Null }
 }
 
 # ========================================================
@@ -1593,11 +1636,11 @@ function Main-Menu {
 
                 if ($sel -eq "ALL") {
                     foreach ($k in (Get-CategoryNames $categories)) {
-                        Start-CategoryTest -CategoryKey $k -CategoryData $categories.$k -Packets $script:PACKETS
+                        Start-CategoryTest -CategoryKey $k -CategoryData $categories.$k -Packets $script:PACKETS -Interactive
                     }
                 } else {
                     foreach ($k in $sel) {
-                        Start-CategoryTest -CategoryKey $k -CategoryData $categories.$k -Packets $script:PACKETS
+                        Start-CategoryTest -CategoryKey $k -CategoryData $categories.$k -Packets $script:PACKETS -Interactive
                     }
                 }
             }
@@ -1639,19 +1682,25 @@ function Main-Menu {
 # ========================================================
 # ENTRY POINT
 # ========================================================
-Register-Cleanup
+if ($MyInvocation.InvocationName -ne '.') {
+    Register-Cleanup
 
-if ($NoMenu -and $CategoryName) {
-    $categories = Load-Categories
-    if (-not $categories) { exit 1 }
-    if (-not $Packets -or $Packets -lt 1) { $Packets = $script:DEFAULT_PACKETS }
-    if ($Packets -gt $script:MAX_PACKETS) { $Packets = $script:MAX_PACKETS }
-    if (-not $categories.$CategoryName) {
-        Write-Host "Category not found: $CategoryName" -ForegroundColor $script:Theme.Danger
+    if ($NoMenu -xor [bool]$CategoryName) {
+        Write-Host "Use -NoMenu together with -CategoryName." -ForegroundColor $script:Theme.Danger
         exit 1
     }
-    Start-CategoryTest -CategoryKey $CategoryName -CategoryData $categories.$CategoryName -Packets $Packets
-    exit 0
-}
 
-Main-Menu
+    if ($NoMenu -and $CategoryName) {
+        $categories = Load-Categories
+        if (-not $categories) { exit 1 }
+        if (-not $Packets) { $Packets = $script:DEFAULT_PACKETS }
+        if (-not $categories.$CategoryName) {
+            Write-Host "Category not found: $CategoryName" -ForegroundColor $script:Theme.Danger
+            exit 1
+        }
+        Start-CategoryTest -CategoryKey $CategoryName -CategoryData $categories.$CategoryName -Packets $Packets
+        exit 0
+    }
+
+    Main-Menu
+}

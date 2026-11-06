@@ -10,6 +10,6 @@ if %ERRORLEVEL%==0 (
     set PS=powershell
 )
 
-%PS% -NoProfile -ExecutionPolicy Bypass -File "%~dp0ServerTester.ps1" %*
+%PS% -NoProfile -ExecutionPolicy RemoteSigned -File "%~dp0ServerTester.ps1" %*
 
 endlocal
