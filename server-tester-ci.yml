@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PSScriptAnalyzer and Pester
+        shell: pwsh
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
+          Install-Module Pester -Force -Scope CurrentUser -SkipPublisherCheck
+
+      - name: Lint
+        shell: pwsh
+        run: |
+          $issues = @()
+          $issues += Invoke-ScriptAnalyzer -Path ServerTester.ps1 -Severity Error
+          $issues += Invoke-ScriptAnalyzer -Path src -Severity Error
+          $issues += Invoke-ScriptAnalyzer -Path ServerTester.Tests.ps1 -Severity Error
+          if ($issues) { $issues | Format-Table -AutoSize; exit 1 }
+
+      - name: Test
+        shell: pwsh
+        run: Invoke-Pester -Path ServerTester.Tests.ps1 -Output Detailed
