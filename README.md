@@ -2,7 +2,7 @@
 
 Multi-protocol network tester for mining pools, CDNs, DNS and more.
 
-[![CI](https://github.com/erffanhub-00/server-tester/actions/workflows/ci.yml/badge.svg)](https://github.com/erffanhub-00/server-tester/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Version](https://img.shields.io/badge/Version-v2.2.0-success?style=for-the-badge)](CHANGELOG.md)
+[![CI](https://github.com/erffanhub-00/server-tester/actions/workflows/ci.yml/badge.svg)](https://github.com/erffanhub-00/server-tester/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Version](https://img.shields.io/badge/version-2.2.0-blue.svg)](CHANGELOG.md)
 
 Server Tester is a PowerShell CLI tool that tests network latency, packet loss, jitter, TCP connectivity and application-level protocols across multiple servers at the same time. Each layer is measured independently — ICMP, TCP, then the application protocol (HTTP / HTTPS / Stratum) — so a slow HTTPS result does not hide a fast network underneath.
 
@@ -250,9 +250,7 @@ Contributions are welcome: fork, create a feature branch, make your changes, run
 
 ## License
 
-MIT License — see [LICENSE](LICENSE). Use this tool only for servers and infrastructure you own or have permission to test.
-
-Built by [Erffan](https://github.com/erffanhub-00).
+MIT — see [LICENSE](LICENSE). Use this tool only for servers and infrastructure you own or have permission to test.
 
 ---
 
