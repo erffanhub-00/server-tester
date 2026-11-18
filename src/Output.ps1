@@ -110,7 +110,14 @@ function Show-Ranking {
             }
             $rankIdx++
         }
-        $csvData | Export-Csv -Path $csv -NoTypeInformation -Encoding UTF8
+        # -NoTypeInformation is obsolete in PowerShell 7.5+ (no type info is
+        # the default there); keep it only for older versions, where
+        # Windows PowerShell 5.1 still writes a #TYPE header without it.
+        $csvParams = @{ Path = $csv; Encoding = 'UTF8' }
+        if ($PSVersionTable.PSVersion.Major -lt 7 -or ($PSVersionTable.PSVersion.Major -eq 7 -and $PSVersionTable.PSVersion.Minor -lt 5)) {
+            $csvParams.NoTypeInformation = $true
+        }
+        $csvData | Export-Csv @csvParams
         Write-Host "  " -NoNewline
         Write-Host "[CSV]  " -ForegroundColor $script:Theme.Success -NoNewline
         Write-Host $csv -ForegroundColor $script:Theme.Muted
