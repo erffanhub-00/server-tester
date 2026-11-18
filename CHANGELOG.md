@@ -17,6 +17,7 @@
 - `Show-ServerDetail` had three unused parameters (`HttpPorts`, `HttpsPorts`, `StratumPorts`); removed.
 - A failing output-directory creation now warns instead of failing silently.
 - Tests fixed for Pester 6: helper functions moved into `BeforeAll` (top-level helpers are not visible to `It` blocks under Pester 6).
+- `Export-Csv -NoTypeInformation` printed a deprecation warning on every run under PowerShell 7.5+; the flag is now only passed on older versions (Windows PowerShell 5.1 still needs it to suppress the `#TYPE` header).
 
 ## [2.1.0] - 2026-11-06
 
